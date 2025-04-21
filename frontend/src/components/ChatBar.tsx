@@ -1,26 +1,33 @@
 import { useEffect, useRef, useState } from "react";
+import { getWebSocket, whenSocketOpen } from "../ws";
 
 export default function ChatBar() {
   const [input, setInput] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    const ws = new WebSocket(import.meta.env.VITE_WS_URL || "ws://localhost:8000/ws");
+    const ws = getWebSocket();
     wsRef.current = ws;
-    ws.onmessage = (ev) => {
+
+    const handler = (ev: MessageEvent) => {
       const msg = JSON.parse(ev.data);
       if (msg.kind === "chat-reply") {
         window.dispatchEvent(new CustomEvent("doc-append", { detail: `🤖 ${msg.text}` }));
       }
     };
-    return () => ws.close();
+
+    ws.addEventListener("message", handler);
+    return () => ws.removeEventListener("message", handler);
   }, []);
 
   const send = () => {
-    if (!input.trim() || !wsRef.current) return;
-    wsRef.current.send(JSON.stringify({ kind: "chat", text: input }));
-    window.dispatchEvent(new CustomEvent("doc-append", { detail: `🧑 ${input}` }));
-    setInput("");
+    if (!input.trim()) return;
+    whenSocketOpen(() => {
+      const ws = wsRef.current || getWebSocket();
+      ws.send(JSON.stringify({ kind: "chat", text: input }));
+      window.dispatchEvent(new CustomEvent("doc-append", { detail: `🧑 ${input}` }));
+      setInput("");
+    });
   };
 
   return (

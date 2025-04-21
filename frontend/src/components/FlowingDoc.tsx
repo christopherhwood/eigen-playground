@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { getWebSocket } from "../ws";
 
 export default function FlowingDoc() {
   const [paras, setParas] = useState<string[]>([]);
@@ -34,52 +35,24 @@ export default function FlowingDoc() {
     []
   );
 
-  // websocket for comments & chat replies only
+  // Set up WebSocket listeners for comment & chat replies once.
   useEffect(() => {
-    console.log("Setting up WebSocket connection");
-    
-    const wsUrl = (import.meta as any).env.VITE_WS_URL || "ws://localhost:8000/ws";
-    console.log("WebSocket URL:", wsUrl);
-    
-    const ws = new WebSocket(wsUrl);
+    const ws = getWebSocket();
     wsRef.current = ws;
-    
-    ws.onopen = () => {
-      console.log("WebSocket connection established");
-    };
-    
-    ws.onclose = () => {
-      console.log("WebSocket connection closed");
-    };
-    
-    ws.onerror = (error) => {
-      console.error("WebSocket error:", error);
-    };
-    
-    ws.onmessage = (ev) => {
+
+    const handler = (ev: MessageEvent) => {
       try {
-        console.log("WebSocket message received:", ev.data);
         const msg = JSON.parse(ev.data);
-        console.log("Parsed message:", msg);
-        
         if (msg.kind === "reply") {
-          console.log("Handling reply message for target:", msg.targetId);
           handleReply(msg);
         }
-        
-        if (msg.kind === "chat-reply") {
-          console.log("Handling chat reply");
-          setParas((p) => [...p, `🤖 ${msg.text}`]);
-        }
-      } catch (error) {
-        console.error("Error handling WebSocket message:", error);
+      } catch (err) {
+        console.error("Error handling WebSocket message:", err);
       }
     };
-    
-    return () => {
-      console.log("Closing WebSocket connection");
-      ws.close();
-    };
+
+    ws.addEventListener("message", handler);
+    return () => ws.removeEventListener("message", handler);
   }, []);
 
   // Listen for narrator & user chat lines
@@ -1072,8 +1045,14 @@ export default function FlowingDoc() {
     try {
       // capture snippet and paragraph text
       const highlighted = range.toString();
+      // We might want the parent paragraph for context later, but we don't
+      // currently use it.  Grab it anyway (prefixed with underscore so
+      // TypeScript doesn't complain about an unused variable when
+      // `noUnusedLocals` is enabled).
       const paraElem = range.startContainer.nodeType === 3 ? range.startContainer.parentElement : range.startContainer;
-      const paraText = (paraElem as HTMLElement).innerText;
+      const _paraText = (paraElem as HTMLElement).innerText;
+      // Touch it so TS doesn't complain about being unused
+      void _paraText;
 
       const id = `sel-${Date.now()}`;
       const span = document.createElement("span");

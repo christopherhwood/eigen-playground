@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { getWebSocket, whenSocketOpen } from "../ws";
 
 // Improved slider component with drag state tracking
 function Slider({ 
@@ -24,6 +25,10 @@ function Slider({
         step={0.1}
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
+        onMouseDown={onDragStart}
+        onMouseUp={onDragEnd}
+        onTouchStart={onDragStart}
+        onTouchEnd={onDragEnd}
         className="w-32 accent-indigo-500"
       />
       <span className="text-xs mt-1">{value.toFixed(1)}</span>
@@ -55,13 +60,10 @@ export default function MatrixPlayground() {
   const T = ([x, y]: [number, number]): [number, number] => [a * x + b * y, c * x + d * y];
   
   // Handlers for slider drag events (added for compatibility)
-  const handleDragStart = useCallback(() => {
-    console.log("Slider drag started");
-  }, []);
-  
-  const handleDragEnd = useCallback(() => {
-    console.log("Slider drag ended");
-  }, []);
+  const [dragging, setDragging] = useState(false);
+
+  const handleDragStart = useCallback(() => setDragging(true), []);
+  const handleDragEnd = useCallback(() => setDragging(false), []);
 
   // drawing constants
   const size = 400;
@@ -87,39 +89,44 @@ export default function MatrixPlayground() {
     ...tests.map(T),
   ].every(([x, y]) => Math.hypot(x, y) < 1e-6);
   
-  // Create a persistent WebSocket connection that dispatches events on response
+  // Set up a *single* WebSocket listener for narrative messages.  Because we
+  // now re‑use one shared connection, this effect runs only once.
   useEffect(() => {
-    console.log("Creating WebSocket connection");
-    const ws = new WebSocket(import.meta.env.VITE_WS_URL || "ws://localhost:8000/ws");
-    
-    ws.onopen = () => {
-      console.log("WebSocket connected");
-      ws.send(
-        JSON.stringify({ kind: "matrix", a, b, c, d, trace, det, disc, collapsed, ts: Date.now() })
-      );
-    };
-    
-    ws.onmessage = (ev) => {
+    const ws = getWebSocket();
+
+    const handleMsg = (ev: MessageEvent) => {
       const msg = JSON.parse(ev.data);
       if (msg.kind === "matrix") {
-        // forward to doc
-        console.log("Dispatching narrative event:", msg.text);
         window.dispatchEvent(new CustomEvent("narrative", { detail: msg.text }));
       }
     };
-    
-    ws.onerror = (error) => {
-      console.error("WebSocket error:", error);
-    };
-    
-    ws.onclose = () => {
-      console.log("WebSocket disconnected");
-    };
-    
+
+    ws.addEventListener("message", handleMsg);
+    return () => ws.removeEventListener("message", handleMsg);
+  }, []);
+
+  // Whenever the matrix settles (no dragging) send one update, debounced a
+  // little so rapid keyboard nudges don't spam either.
+  const sendTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (dragging) return; // wait until the user releases the slider
+
+    if (sendTimeout.current) clearTimeout(sendTimeout.current);
+    sendTimeout.current = setTimeout(() => {
+      whenSocketOpen(() => {
+        const ws = getWebSocket();
+        ws.send(
+          JSON.stringify({ kind: "matrix", a, b, c, d, trace, det, disc, collapsed, ts: Date.now() })
+        );
+      });
+    }, 150); // 150 ms – just enough to coalesce quick key presses
+
     return () => {
-      ws.close();
+      if (sendTimeout.current) clearTimeout(sendTimeout.current);
     };
-  }, [a, b, c, d, trace, det, disc, collapsed]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [a, b, c, d, trace, det, disc, collapsed, dragging]);
 
   // compute eigenvectors if real
   const eigenData = (() => {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { getWebSocket, whenSocketOpen } from "../ws";
 
 export default function ChatDrawer() {
   const [open, setOpen] = useState(false);
@@ -7,19 +8,25 @@ export default function ChatDrawer() {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    const ws = new WebSocket(import.meta.env.VITE_WS_URL || "ws://localhost:8000/ws");
+    const ws = getWebSocket();
     wsRef.current = ws;
-    ws.onmessage = (ev) => {
+
+    const handler = (ev: MessageEvent) => {
       const msg = JSON.parse(ev.data);
       if (msg.kind === "chat-reply") setLog((l) => [...l, { sender: "bot", text: msg.text }]);
     };
-    return () => ws.close();
+
+    ws.addEventListener("message", handler);
+    return () => ws.removeEventListener("message", handler);
   }, []);
 
   const send = () => {
-    if (!input.trim() || !wsRef.current) return;
+    if (!input.trim()) return;
     setLog((l) => [...l, { sender: "user", text: input }]);
-    wsRef.current.send(JSON.stringify({ kind: "chat", text: input }));
+    whenSocketOpen(() => {
+      const ws = wsRef.current || getWebSocket();
+      ws.send(JSON.stringify({ kind: "chat", text: input }));
+    });
     setInput("");
   };
 
