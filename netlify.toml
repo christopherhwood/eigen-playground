@@ -1,0 +1,6 @@
+[build]
+  command   = "npm run build --prefix frontend"
+  publish   = "frontend/dist"
+  environment = { VITE_WS_URL = "/.netlify/functions/proxy" }
+
+# (Optionally add a Netlify function to proxy websocket if CORS becomes tricky.)
